@@ -14,7 +14,7 @@ load_dotenv()
 # PaddlePaddle AI Studio API
 PADDLE_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # From AI Studio
 # PP-StructureV3 layout-parsing endpoint (from your AI Studio app)
-API_URL = "https://yav0qb58n0qcb2g5.aistudio-app.com/layout-parsing"
+URL_API_PADDLE = os.getenv("API_URL_PADDLE")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "output_paddle")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -72,7 +72,7 @@ def parse_pdf_sync(file_path, use_chart_recognition=False, use_doc_unwarping=Fal
         "useChartRecognition": use_chart_recognition,
     }
     
-    response = requests.post(API_URL, json=payload, headers=headers, timeout=600)
+    response = requests.post(URL_API_PADDLE, json=payload, headers=headers, timeout=600)
     
     if response.status_code == 429:
         raise Exception("Rate limit exceeded - daily parsing limit reached")

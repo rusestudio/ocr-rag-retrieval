@@ -211,10 +211,10 @@ def ask_question(question, top_k=3, index_name=ES_INDEX):
     for i, r in enumerate(results, 1):
         print(f"--- Result {i} (score: {r['score']:.2f}) ---")
         print(f"Source: {r['source']}")
-        # Show full content (up to 1500 chars, truncate only if very long)
+        # Show full content (up to 1000 chars, truncate only if very long)
         content = r['content']
-        if len(content) > 1500:
-            print(f"Content: {content[:1500]}... [truncated, {len(content)} chars total]")
+        if len(content) > 1000:
+            print(f"Content: {content[:1000]}... [truncated, {len(content)} chars total]")
         else:
             print(f"Content: {content}")
         print()
