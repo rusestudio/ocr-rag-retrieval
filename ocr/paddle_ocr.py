@@ -5,9 +5,11 @@ Extracts PDF to Markdown using PP-StructureV3
 
 import requests
 import os
+import re
 import base64
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+from html.parser import HTMLParser
 
 load_dotenv()
 
@@ -18,6 +20,134 @@ URL_API_PADDLE = os.getenv("API_URL_PADDLE")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "output_paddle")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+# -----------------------------
+# HTML Table → Markdown Table Converter
+# -----------------------------
+class TableHTMLParser(HTMLParser):
+    """Parse HTML table and extract rows/cells"""
+    def __init__(self):
+        super().__init__()
+        self.rows = []
+        self.current_row = []
+        self.current_cell = ""
+        self.in_cell = False
+        self.is_header = False
+        
+    def handle_starttag(self, tag, attrs):
+        if tag == 'tr':
+            self.current_row = []
+        elif tag in ('td', 'th'):
+            self.in_cell = True
+            self.current_cell = ""
+            if tag == 'th':
+                self.is_header = True
+        elif tag == 'br' and self.in_cell:
+            self.current_cell += " "
+            
+    def handle_endtag(self, tag):
+        if tag == 'tr':
+            if self.current_row:
+                self.rows.append(self.current_row)
+        elif tag in ('td', 'th'):
+            self.in_cell = False
+            self.current_row.append(self.current_cell.strip())
+            
+    def handle_data(self, data):
+        if self.in_cell:
+            self.current_cell += data
+
+
+def html_table_to_markdown(html_table):
+    """
+    Convert HTML table to Markdown table format
+    
+    Args:
+        html_table: HTML string containing <table>...</table>
+    
+    Returns:
+        Markdown formatted table with | separators
+    """
+    parser = TableHTMLParser()
+    try:
+        parser.feed(html_table)
+    except Exception:
+        # If parsing fails, just strip HTML tags
+        return re.sub(r'<[^>]+>', ' ', html_table).strip()
+    
+    if not parser.rows:
+        return ""
+    
+    # Build markdown table
+    md_lines = []
+    
+    for i, row in enumerate(parser.rows):
+        # Escape pipe characters in cell content
+        cells = [cell.replace('|', '\\|') for cell in row]
+        line = "| " + " | ".join(cells) + " |"
+        md_lines.append(line)
+        
+        # Add separator after first row (header)
+        if i == 0:
+            separator = "|" + "|".join(["---" for _ in row]) + "|"
+            md_lines.append(separator)
+    
+    return "\n".join(md_lines)
+
+
+def clean_html_to_markdown(text):
+    """
+    Clean HTML elements from extracted markdown:
+    - Convert <table> → Markdown tables
+    - Remove <div style=...> → plain text
+    - Clean other HTML artifacts
+    
+    Args:
+        text: Raw markdown with HTML elements
+    
+    Returns:
+        Cleaned markdown text
+    """
+    result = text
+    
+    # 1. Convert HTML tables to Markdown tables
+    table_pattern = re.compile(r'<table[^>]*>.*?</table>', re.DOTALL | re.IGNORECASE)
+    
+    def replace_table(match):
+        html_table = match.group(0)
+        md_table = html_table_to_markdown(html_table)
+        return "\n\n" + md_table + "\n\n" if md_table else ""
+    
+    result = table_pattern.sub(replace_table, result)
+    
+    # 2. Convert <div style="text-align: center;">content</div> → **content**
+    div_center_pattern = re.compile(
+        r'<div[^>]*style=["\'][^"\']*text-align:\s*center[^"\']*["\'][^>]*>(.*?)</div>',
+        re.DOTALL | re.IGNORECASE
+    )
+    result = div_center_pattern.sub(r'**\1**', result)
+    
+    # 3. Remove remaining div tags but keep content
+    result = re.sub(r'<div[^>]*>(.*?)</div>', r'\1', result, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 4. Remove span tags but keep content
+    result = re.sub(r'<span[^>]*>(.*?)</span>', r'\1', result, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 5. Convert <br> and <br/> to newlines
+    result = re.sub(r'<br\s*/?>', '\n', result, flags=re.IGNORECASE)
+    
+    # 6. Remove any remaining HTML tags
+    result = re.sub(r'<[^>]+>', '', result)
+    
+    # 7. Clean up excessive whitespace
+    result = re.sub(r'\n{4,}', '\n\n\n', result)  # Max 3 newlines
+    result = re.sub(r' {3,}', '  ', result)  # Max 2 spaces
+    
+    # 8. Remove empty bold markers
+    result = re.sub(r'\*\*\s*\*\*', '', result)
+    
+    return result.strip()
 
 
 def encode_file_to_base64(file_path):
@@ -89,9 +219,14 @@ def parse_pdf_sync(file_path, use_chart_recognition=False, use_doc_unwarping=Fal
     return result["result"]
 
 
-def extract_markdown_from_result(result, save_images=True):
+def extract_markdown_from_result(result, save_images=True, clean_html=True):
     """
     Extract markdown text and images from PaddleOCR result
+    
+    Args:
+        result: PaddleOCR API result
+        save_images: Whether to save extracted images
+        clean_html: Whether to convert HTML tables to Markdown format
     
     Returns:
         Combined markdown text
@@ -117,7 +252,13 @@ def extract_markdown_from_result(result, save_images=True):
                 except Exception as e:
                     print(f"⚠️ Failed to save image {img_path}: {e}")
     
-    return "\n\n---\n\n".join(markdown_parts)
+    combined = "\n\n---\n\n".join(markdown_parts)
+    
+    # Clean HTML tables → Markdown tables
+    if clean_html:
+        combined = clean_html_to_markdown(combined)
+    
+    return combined
 
 
 def process_pdf(file_path, save_images=True):
