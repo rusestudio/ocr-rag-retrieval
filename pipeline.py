@@ -127,12 +127,13 @@ def interactive_qa(index="all"):
             break
         
         if question.lower() == "switch":
-            if current_index == "mineru":
-                current_index = "paddle"
-            elif current_index == "paddle":
+            # cycle through supported indices
+            order = ["mineru", "paddle", "kangwon2", "all"]
+            try:
+                idx = order.index(current_index)
+                current_index = order[(idx + 1) % len(order)]
+            except ValueError:
                 current_index = "all"
-            else:
-                current_index = "mineru"
             print(f"🔄 Switched to index: {current_index}")
             continue
         
@@ -143,6 +144,10 @@ def interactive_qa(index="all"):
             ask_mineru(question)
         elif current_index == "paddle":
             ask_paddle(question)
+        elif current_index == "kangwon2":
+            # use the duck-typed helper defined in elastic_rag
+            from elastic.elastic_rag import ask_kangwon2
+            ask_kangwon2(question)
         else:
             ask_all(question)
 
@@ -156,7 +161,7 @@ if __name__ == "__main__":
     parser.add_argument("--pdf", type=str, help="Path to PDF file to process")
     parser.add_argument("--folder", type=str, help="Path to folder with split PDF pages (paddle only)")
     parser.add_argument("--qa", action="store_true", help="Start interactive Q&A mode")
-    parser.add_argument("--index", choices=["mineru", "paddle", "all"], default="all",
+    parser.add_argument("--index", choices=["mineru", "paddle", "kangwon2", "all"], default="all",
                         help="Which index to search in Q&A mode")
     
     args = parser.parse_args()
@@ -173,7 +178,19 @@ if __name__ == "__main__":
             else:
                 run_mineru_pipeline(path)
         else:  # paddle
-            run_paddle_pipeline(path, is_folder)
+            # If the folder is the special 'kangwon' collection, delegate
+            # to the batched/multiprocessor `ocr/paddle_kangwon` module.
+            if is_folder and os.path.basename(path.rstrip("/\\")) == "kangwon":
+                try:
+                    from ocr import paddle_kangwon
+
+                    print("➡️ Detected 'kangwon' folder — using batched processor (ocr/paddle_kangwon)")
+                    paddle_kangwon.process_all()
+                except Exception as e:
+                    print(f"⚠️ Failed to run paddle_kangwon processor: {e}\nFalling back to default paddle pipeline...")
+                    run_paddle_pipeline(path, is_folder)
+            else:
+                run_paddle_pipeline(path, is_folder)
     
     if args.qa:
         interactive_qa(args.index)

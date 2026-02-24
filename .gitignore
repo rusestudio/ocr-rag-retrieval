@@ -35,6 +35,7 @@ output_paddle/
 output_mineru/
 output/
 output_kangwon/
+kangout/
 
 # IDE
 .vscode/

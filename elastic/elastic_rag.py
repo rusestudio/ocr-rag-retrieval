@@ -16,6 +16,8 @@ ES_API_KEY = os.getenv("ELASTICSEARCH_API_KEY", None)
 # Index names - separate for each OCR model
 ES_INDEX_MINERU = os.getenv("ELASTICSEARCH_INDEX", "pdf_documents")
 ES_INDEX_PADDLE = os.getenv("ELASTICSEARCH_INDEX_PADDLE", "pdf_documents_paddle")
+# additional manual index for kangwon2 batch run
+ES_INDEX_KANGWON2 = os.getenv("ELASTICSEARCH_INDEX_KANGWON2", "kangwon2")
 
 # Default index (for backward compatibility)
 ES_INDEX = ES_INDEX_MINERU
@@ -65,9 +67,7 @@ def create_index(es, index_name=ES_INDEX):
     if not es.indices.exists(index=index_name):
         es.indices.create(index=index_name, body=mappings)
         print(f"✅ Index '{index_name}' created")
-    else:
-        print(f"ℹ️ Index '{index_name}' already exists")
-
+    # else: index already exists, nothing to do (avoids noisy log)
 
 # -----------------------------
 # Step 2: Chunk markdown content
@@ -168,7 +168,7 @@ def search_documents(es, query, top_k=5, index_name=ES_INDEX):
 # -----------------------------
 # Main pipeline function
 # -----------------------------
-def ingest_markdown_to_elastic(markdown_content, source_file, index_name=ES_INDEX):
+def ingest_markdown_to_elastic(markdown_content, source_file, index_name=ES_INDEX, es=None):
     """
     Full pipeline: chunk markdown and index to Elasticsearch
     
@@ -177,7 +177,10 @@ def ingest_markdown_to_elastic(markdown_content, source_file, index_name=ES_INDE
         source_file: Name of the source file
         index_name: Which index to use (ES_INDEX_MINERU or ES_INDEX_PADDLE)
     """
-    es = get_es_client()
+    # Allow caller to provide an existing Elasticsearch client to avoid
+    # reconnecting for every file (helps with large batch ingestion).
+    if es is None:
+        es = get_es_client()
     
     # Create index if needed
     create_index(es, index_name)
@@ -235,6 +238,11 @@ def ingest_paddle(markdown_content, source_file):
     return ingest_markdown_to_elastic(markdown_content, source_file, ES_INDEX_PADDLE)
 
 
+def ingest_kangwon2(markdown_content, source_file):
+    """Ingest results into the kangwon2 index (manual batch)."""
+    return ingest_markdown_to_elastic(markdown_content, source_file, ES_INDEX_KANGWON2)
+
+
 def ask_mineru(question, top_k=3):
     """Search in MinerU OCR index"""
     return ask_question(question, top_k, ES_INDEX_MINERU)
@@ -245,19 +253,30 @@ def ask_paddle(question, top_k=3):
     return ask_question(question, top_k, ES_INDEX_PADDLE)
 
 
+def ask_kangwon2(question, top_k=3):
+    """Search in the kangwon2 index"""
+    return ask_question(question, top_k, ES_INDEX_KANGWON2)
+
+
 def ask_all(question, top_k=3):
-    """Search in both indices and combine results"""
+    """Search in all defined indices and combine results"""
+    results = {}
     print("=" * 50)
     print("🔍 MINERU INDEX")
     print("=" * 50)
-    mineru_results = ask_question(question, top_k, ES_INDEX_MINERU)
+    results["mineru"] = ask_question(question, top_k, ES_INDEX_MINERU)
     
     print("=" * 50)
     print("🔍 PADDLE INDEX")
     print("=" * 50)
-    paddle_results = ask_question(question, top_k, ES_INDEX_PADDLE)
+    results["paddle"] = ask_question(question, top_k, ES_INDEX_PADDLE)
     
-    return {"mineru": mineru_results, "paddle": paddle_results}
+    print("=" * 50)
+    print("🔍 KANGWON2 INDEX")
+    print("=" * 50)
+    results["kangwon2"] = ask_question(question, top_k, ES_INDEX_KANGWON2)
+    
+    return results
 
 
 # -----------------------------
@@ -293,4 +312,5 @@ if __name__ == "__main__":
         if args.index == "all":
             ask_all(args.query)
         else:
-            ask_question(args.query, index_name=index)
+            # index variable should never be None here but guard for typing
+            ask_question(args.query, index_name=index or ES_INDEX_MINERU)
